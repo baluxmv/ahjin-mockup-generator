@@ -303,6 +303,7 @@ class ProcessingConfig:
     """Configuration for processing from GUI."""
     num_workers: int = DEFAULT_WORKERS
     use_parallel: bool = True
+    max_leads: int = 0  # 0 = no limit, process all
     confirmed: bool = False
 
 
@@ -319,7 +320,7 @@ def show_config_dialog(
 
     root = tk.Tk()
     root.title("Configuración de Procesamiento")
-    root.geometry("450x400")
+    root.geometry("450x480")
     root.resizable(False, False)
 
     # Center window
@@ -397,16 +398,55 @@ def show_config_dialog(
     )
     workers_hint.pack(anchor=tk.W)
 
-    # Estimated time
-    est_time = leads_count * 2  # ~2 min per lead with default workers
-    if parallel_var.get():
-        est_time = est_time // DEFAULT_WORKERS
+    # Limit frame
+    limit_frame = ttk.LabelFrame(main_frame, text="Límite de Leads", padding="10")
+    limit_frame.pack(fill=tk.X, pady=(0, 15))
+
+    limit_var = tk.StringVar(value=str(leads_count))
+
+    limit_label = ttk.Label(limit_frame, text=f"Máximo a procesar (de {leads_count} disponibles):")
+    limit_label.pack(anchor=tk.W)
+
+    limit_entry = ttk.Entry(limit_frame, textvariable=limit_var, width=10)
+    limit_entry.pack(anchor=tk.W, pady=(5, 5))
+
+    limit_hint = ttk.Label(
+        limit_frame,
+        text="Deja vacío o 0 para procesar todos",
+        font=('Helvetica', 9),
+        foreground='gray'
+    )
+    limit_hint.pack(anchor=tk.W)
+
+    # Estimated time (updates dynamically)
+    def calculate_est_time():
+        try:
+            limit = int(limit_var.get()) if limit_var.get().strip() else leads_count
+            if limit <= 0:
+                limit = leads_count
+            limit = min(limit, leads_count)
+        except ValueError:
+            limit = leads_count
+
+        time_mins = limit * 2  # ~2 min per lead
+        if parallel_var.get():
+            workers = int(workers_var.get())
+            time_mins = max(1, time_mins // workers)
+        return time_mins, limit
+
+    est_time, _ = calculate_est_time()
     est_label = ttk.Label(
         main_frame,
         text=f"Tiempo estimado: ~{est_time} minutos",
         font=('Helvetica', 10)
     )
     est_label.pack(pady=(0, 15))
+
+    def update_estimate(*args):
+        time_mins, limit = calculate_est_time()
+        est_label.config(text=f"Tiempo estimado: ~{time_mins} minutos ({limit} leads)")
+
+    limit_var.trace_add("write", update_estimate)
 
     # Buttons frame
     buttons_frame = ttk.Frame(main_frame)
@@ -415,6 +455,14 @@ def show_config_dialog(
     def on_confirm():
         config.num_workers = int(workers_var.get())
         config.use_parallel = parallel_var.get()
+
+        # Parse max_leads
+        try:
+            max_val = int(limit_var.get()) if limit_var.get().strip() else 0
+            config.max_leads = max(0, max_val)
+        except ValueError:
+            config.max_leads = 0  # Process all
+
         config.confirmed = True
         root.destroy()
 
@@ -2277,8 +2325,14 @@ def main():
         print("Cancelado por el usuario")
         return
 
+    # Apply max_leads limit
+    if config.max_leads > 0 and config.max_leads < len(leads):
+        leads = leads[:config.max_leads]
+        print(f"   Limitado a: {config.max_leads} leads (de {len(leads)} disponibles)")
+
     print(f"   Workers: {config.num_workers}")
     print(f"   Paralelo: {'Sí' if config.use_parallel else 'No'}")
+    print(f"   Leads a procesar: {len(leads)}")
 
     # 8. Process leads
     print("\n8. Procesando leads...")
