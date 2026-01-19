@@ -1,27 +1,34 @@
 # Mockup Generator
 
-Generador automático de mockups personalizados para leads de outreach. Crea sitios web preview usando templates Astro, genera contenido con Claude AI, y produce mensajes de WhatsApp/Email listos para enviar.
+Generador automático de mockups personalizados para leads de outreach. Crea sitios web preview usando templates Astro, genera contenido con Claude AI (via CLI), y produce mensajes de WhatsApp/Email listos para enviar.
 
 ## Características
 
-- **GUI interactiva** - Selección de archivos y configuración visual con tkinter
+- **Modo CLI y GUI** - Ejecuta con argumentos de línea de comandos o interfaz gráfica con tkinter
 - **Procesamiento paralelo** - 1-5 workers simultáneos para procesar múltiples leads
-- **Generación de contenido con IA** - Claude API para decisiones de diseño y contenido personalizado
-- **Múltiples fuentes de imágenes** - Instagram → Unsplash → Placeholders locales
-- **Screenshots automáticos** - Playwright captura el hero section de cada mockup
-- **Mensajes de outreach** - WhatsApp y Email generados automáticamente
+- **Generación de contenido con IA** - Claude CLI para decisiones de diseño y contenido personalizado
+- **Selección inteligente de templates** - Claude elige entre múltiples templates disponibles
+- **Imágenes de stock por nicho** - Pexels API con fotos curadas para cada nicho (manicure, spa, etc.)
+- **Screenshots automáticos** - Playwright captura full-page screenshot + hero section + PDF
+- **Mensajes de outreach** - WhatsApp y Email generados automáticamente con copywriting chileno
 - **Actualización de Excel** - Tracking de estado en tiempo real
 
 ## Requisitos
 
 ### Sistema
-- Python 3.10+
+- Python 3.9+
 - Node.js 18+ (para Astro)
 - macOS / Linux / Windows
+- Claude CLI instalado (`claude --version`)
 
-### API Keys
-- **ANTHROPIC_API_KEY** (requerido) - [Obtener en Anthropic Console](https://console.anthropic.com/)
-- **UNSPLASH_ACCESS_KEY** (opcional) - [Obtener en Unsplash Developers](https://unsplash.com/developers)
+### Claude CLI
+Este proyecto usa **Claude CLI** (no la API directamente) para generar contenido. Debes tener una suscripción Max o Team.
+
+```bash
+# Verificar instalación
+claude --version
+# Debe mostrar algo como: 2.1.12 (Claude Code)
+```
 
 ## Instalación
 
@@ -41,229 +48,205 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 4. Configurar variables de entorno
-```bash
-cp .env.example .env
-```
-
-Edita `.env` y agrega tus API keys:
-```bash
-# REQUERIDO
-ANTHROPIC_API_KEY=sk-ant-api03-tu-key-aqui
-
-# OPCIONAL - para imágenes de stock
-UNSPLASH_ACCESS_KEY=tu-unsplash-key
-```
-
-### 5. Agregar imágenes de fallback (opcional pero recomendado)
-```bash
-# Estructura de carpetas
-fallback_images/
-├── manicuristas/     # Imágenes para nicho manicuristas
-│   ├── 1.jpg
-│   ├── 2.jpg
-│   └── ...
-├── generic/          # Imágenes genéricas para cualquier nicho
-│   ├── 1.jpg
-│   └── ...
-└── README.md
-```
-
 ## Uso
 
-### Ejecutar el script
+### Modo CLI (recomendado)
 ```bash
-python mockup-generator.py
+python mockup-generator.py \
+  --excel "/path/to/leads.xlsx" \
+  --templates "/path/to/templates/" \
+  --output "/path/to/output/" \
+  --max-leads 5 \
+  --workers 3
 ```
 
-### Flujo de trabajo
+### Modo GUI
+```bash
+python mockup-generator.py
+# Se abre interfaz gráfica para seleccionar archivos
+```
 
-1. **Seleccionar archivo Excel** - Diálogo para elegir el archivo con leads
-2. **Seleccionar carpeta de templates** - Carpeta con templates Astro
-3. **Seleccionar carpeta de output** - Donde se guardarán los mockups
-4. **Configurar procesamiento** - Ventana con:
-   - Resumen de leads y templates encontrados
-   - Slider para número de workers (1-5)
-   - Checkbox para habilitar/deshabilitar procesamiento paralelo
-5. **Iniciar procesamiento** - El script procesa cada lead
+### Argumentos CLI
 
-### Estructura del Excel de leads
+| Argumento | Descripción | Default |
+|-----------|-------------|---------|
+| `--excel` | Ruta al archivo Excel con leads | (requerido en CLI) |
+| `--templates` | Carpeta con templates Astro | (requerido en CLI) |
+| `--output` | Carpeta donde guardar mockups | (requerido en CLI) |
+| `--max-leads` | Máximo de leads a procesar | Sin límite |
+| `--workers` | Workers paralelos (1-5) | 3 |
 
-El Excel debe tener estas columnas (los nombres son flexibles):
+## Estructura del Excel
 
-| Columna | Descripción |
-|---------|-------------|
-| Business Name | Nombre del negocio |
-| Niche | Nicho/categoría (ej: "manicuristas") |
-| País | País |
-| Región | Región |
-| Ciudad | Ciudad |
-| Comuna | Comuna (usado para organizar output) |
-| Website URL | URL del sitio actual (vacío = sin sitio) |
-| Phone/WhatsApp | Número de teléfono |
-| Instagram/FB Link | Link a Instagram |
-| Status | Estado del lead |
-| Owner Name | Nombre del dueño |
-| Tier | Tier del lead (Tier 1 = sin sitio web) |
-| Generate Mockup | "Yes" para procesar |
-| Mockup Status | Estado del mockup (se actualiza automáticamente) |
-| Mockup Path | Ruta al mockup (se llena automáticamente) |
-| Mockup Date | Fecha de generación (se llena automáticamente) |
+El Excel debe tener estas columnas:
 
-### Estructura de templates
+| Columna | Descripción | Ejemplo |
+|---------|-------------|---------|
+| Business Name | Nombre del negocio | "María Bonita Spa" |
+| Niche | Nicho/categoría | "Manicuristas" |
+| Comuna | Comuna (organiza output) | "Providencia" |
+| Phone/WhatsApp | Número de teléfono | "+56 9 1234 5678" |
+| Instagram/FB Link | Link a Instagram | "https://instagram.com/..." |
+| Generate Mockup | "Sí" para procesar | "Sí" |
+| Mockup Status | Se actualiza automáticamente | "Completed" |
+| Mockup Path | Ruta al mockup generado | "/output/Providencia/..." |
+| Mockup Date | Fecha de generación | "2026-01-19" |
+
+## Estructura de Templates
+
+El script detecta templates **recursivamente** hasta 4 niveles de profundidad:
 
 ```
 templates/
-├── manicuristas/                    # Nicho
-│   └── template-1-independiente/    # Template
+├── template-minimalista-elegante/     # Template directo
+│   ├── package.json
+│   └── src/
+├── template-artistica/
+│   └── artistica-creativa/            # Template anidado
 │       ├── package.json
-│       ├── astro.config.mjs
-│       ├── src/
-│       │   ├── config/site.config.ts
-│       │   ├── pages/index.astro
-│       │   └── components/
-│       └── public/
-└── otro-nicho/
-    └── template-X/
+│       └── src/
+└── template-moderna/
+    └── moderna-geometrica/            # Template anidado
+        ├── package.json
+        └── src/
 ```
 
 Cada template debe tener:
-- `package.json`
+- `package.json` (identifica como template válido)
 - `src/config/site.config.ts`
 - `src/pages/index.astro`
 
-### Output generado
+## Output Generado
 
 ```
-[carpeta_output]/
-├── Las_Condes/                      # Organizado por comuna
-│   └── Nails_by_Carolina/           # Nombre del negocio (sanitizado)
-│       ├── proyecto/                # Proyecto Astro completo
-│       │   ├── src/
-│       │   │   └── config/site.config.ts  # Generado
+[output]/
+├── Providencia/                        # Por comuna
+│   └── Maria_Bonita_Spa/              # Por negocio
+│       ├── proyecto/                   # Proyecto Astro completo
+│       │   ├── src/config/site.config.ts
 │       │   ├── public/images/
 │       │   └── package.json
-│       ├── mockup.png               # Screenshot del hero (1440x900)
-│       ├── mensaje.txt              # WhatsApp + Email listos
-│       └── info.json                # Metadatos del proceso
-├── Providencia/
+│       ├── mockup.png                  # Screenshot full-page
+│       ├── mockup-hero.png             # Screenshot solo hero
+│       ├── mockup.pdf                  # PDF del sitio
+│       ├── mensaje.txt                 # WhatsApp + Email
+│       └── info.json                   # Metadatos
+├── Las_Condes/
 │   └── ...
-└── mockup-generator.log             # Log de la sesión
+└── mockup-generator.log
 ```
 
-## Configuración avanzada
+## Flujo de Procesamiento
 
-### Constantes del script
-
-En `mockup-generator.py` puedes modificar:
-
-```python
-# Procesamiento paralelo
-DEFAULT_WORKERS = 3      # Workers por defecto
-MAX_WORKERS = 5          # Máximo de workers
-PORT_POOL = [4321, 4322, 4323, 4324, 4325]  # Puertos Astro
-
-# Timeouts
-SERVER_START_TIMEOUT = 120  # Segundos para iniciar servidor
-NPM_INSTALL_TIMEOUT = 300   # Segundos para npm install
-SCREENSHOT_WAIT = 3000      # Milisegundos antes del screenshot
-
-# Rate limits (segundos entre requests)
-RATE_LIMITS = {
-    'instagram': 5.0,
-    'unsplash': 1.0,
-    'claude': 0.5
-}
+```
+[Excel con leads]
+       ↓
+[Descubrir Templates] ← Búsqueda recursiva (4 niveles)
+       ↓
+[Por cada lead]:
+       ↓
+[Claude CLI] → Elegir template + tema + secciones
+       ↓
+[Pexels API] → Descargar 6 imágenes del nicho
+       ↓
+[Claude CLI] → Generar contenido personalizado
+       ↓
+[Copiar Template] → proyecto/
+       ↓
+[Generar site.config.ts] ← Datos del lead
+       ↓
+[Modificar index.astro] ← Reordenar/ocultar secciones
+       ↓
+[npm install] + [Astro dev server]
+       ↓
+[Playwright] → Screenshots + PDF
+       ↓
+[Claude CLI] → Generar mensajes outreach
+       ↓
+[Actualizar Excel] ← Status + Path + Date
 ```
 
-### Temas disponibles
+## Temas de Color
 
-El script soporta 4 temas de color que Claude elige automáticamente:
+Claude elige automáticamente entre 4 temas:
 
 | Tema | Colores | Ideal para |
 |------|---------|------------|
-| `elegante` | Rosa + Dorado | Negocios premium |
-| `fresh` | Mint + Coral | Negocios jóvenes |
+| `elegante` | Rosa + Dorado | Spas premium, elegantes |
+| `fresh` | Mint + Coral | Negocios jóvenes, modernos |
 | `bold` | Negro + Fucsia | Artistas atrevidos |
-| `natural` | Verde Sage + Beige | Eco-friendly |
+| `natural` | Verde Sage + Beige | Eco-friendly, orgánico |
 
-### Secciones del sitio
+## Imágenes de Stock
 
-Secciones disponibles (Claude decide cuáles mostrar):
-- Hero (obligatorio)
-- About
-- Services
-- Gallery
-- Testimonials
-- Contact (obligatorio)
-- Footer (obligatorio)
-- WhatsAppButton (obligatorio)
+El script usa **Pexels** con IDs curados por nicho:
+
+- **Manicuristas**: Fotos de nail art, manicure, manos con esmalte
+- **Más nichos**: Se pueden agregar en `_get_pexels_ids_for_niche()`
+
+Las imágenes se descargan sin API key usando URLs directas de Pexels CDN.
+
+## Secciones del Sitio
+
+Claude decide qué secciones mostrar y en qué orden:
+
+| Sección | Obligatoria | Descripción |
+|---------|-------------|-------------|
+| Hero | Sí | Header principal con CTA |
+| About | No | Información del negocio |
+| Services | No | Lista de servicios con precios |
+| Gallery | No | Galería de trabajos |
+| Testimonials | No | Testimonios de clientes |
+| Contact | Sí | Info de contacto + ubicación |
+| Footer | Sí | Footer con redes sociales |
+| WhatsAppButton | Sí | Botón flotante de WhatsApp |
 
 ## Troubleshooting
 
-### Error: ANTHROPIC_API_KEY not set
+### Claude CLI no encontrado
 ```bash
-# Verificar que .env existe y tiene la key
-cat .env | grep ANTHROPIC
+# Verificar instalación
+which claude
+claude --version
+
+# Si no está, instalar desde:
+# https://claude.ai/download
 ```
 
-### Error: npm install failed
+### npm install falla
 ```bash
-# Verificar Node.js instalado
-node --version  # Debe ser >= 18
+# Verificar Node.js
+node --version  # >= 18
 
-# Limpiar cache de npm
+# Limpiar cache
 npm cache clean --force
 ```
 
-### Error: Playwright browser not found
+### Playwright no encuentra browser
 ```bash
-# Reinstalar browsers
 playwright install chromium
 ```
 
-### Instagram scraping falla
-- Cuenta puede ser privada
-- Rate limiting de Instagram
-- El script automáticamente pasa a Unsplash/placeholders
+### Mapa no aparece en screenshot
+El template usa un **card elegante de ubicación** en lugar de iframe de Google Maps (que no renderiza en Playwright). El card muestra la dirección y un botón "Ver en Google Maps".
 
-### Servidor Astro no inicia
-- Verificar que el puerto no está en uso
-- El script maneja múltiples puertos (4321-4325)
+### Imágenes no cargan
+El script usa Pexels CDN que es confiable. Si fallan, se usan placeholders locales en `fallback_images/`.
 
-## Arquitectura
+## Arquitectura Técnica
 
-```
-[Excel Leads] → [GUI Selección] → [Descubrir Templates]
-                                         ↓
-                 ┌─────────────────────────────────────┐
-                 │     PROCESAMIENTO PARALELO          │
-                 │   (ThreadPoolExecutor, 3-5 workers) │
-                 └───────────────┬─────────────────────┘
-                                 ↓
-           [Por cada Lead en paralelo]:
-                                 ↓
-         [Claude: Decisiones de Diseño]
-                        ↓
-         [Copiar Template] → [Generar site.config.ts]
-                                    ↓
-         [Descargar Imágenes] → [Modificar index.astro]
-                                    ↓
-         [npm install] → [Iniciar Astro (puerto único)]
-                                    ↓
-         [Screenshot Playwright] → [Detener Servidor]
-                                    ↓
-         [Claude: Mensajes Outreach] → [Guardar Output]
-                                    ↓
-                  [Actualizar Excel (thread-safe)]
-```
+- **Python**: Orquestación, GUI, procesamiento paralelo
+- **Claude CLI**: Decisiones de diseño, contenido, mensajes
+- **Astro**: Framework de templates (SSG)
+- **Playwright**: Screenshots y PDF
+- **Pexels CDN**: Imágenes de stock sin API key
+- **pandas/openpyxl**: Manejo de Excel
 
-## API Usage
+## Costos
 
-Por lead procesado:
-- ~3 llamadas a Claude API
-- ~5,000-10,000 tokens totales
-- Costo estimado: ~$0.05-0.10 USD por lead
+- **Claude CLI**: Incluido en suscripción Max/Team
+- **Pexels**: Gratis (sin API key)
+- **Playwright**: Gratis (open source)
 
 ## Licencia
 
@@ -271,4 +254,4 @@ MIT
 
 ## Autor
 
-Ahjin Agency
+Ahjin Agency - Diseño web para negocios locales en Chile

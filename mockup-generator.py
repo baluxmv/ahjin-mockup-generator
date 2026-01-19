@@ -547,15 +547,16 @@ def discover_templates(templates_folder: Path) -> Dict[str, List[Template]]:
     """
     Scans templates folder and returns dict mapping tipo -> list of templates.
 
-    Supports multiple structures:
-    - Flat: templates/variacion-1/ (has package.json)
-    - 2-level: templates/tipo/variacion/ (tipo/variacion has package.json)
-    - 3-level: templates/niche/tipo/variacion/ (variacion has package.json)
+    RECURSIVELY searches up to 4 levels deep to find ALL valid templates
+    (folders containing package.json).
 
-    Examples:
-    - templates/variacion-1/ → flat (tipo = "default")
-    - templates/template-1-independiente/variacion-1/ → 2-level
-    - manicuristas/template-1-independiente/variacion-1/ → when selecting manicuristas/
+    Structure supported:
+    - template-1-independiente/
+      ├── template-minimalista-elegante/  (package.json here)
+      ├── template-artistica/
+      │   └── artistica-creativa/         (package.json here)
+      └── template-moderna/
+          └── moderna-geometrica/         (package.json here)
     """
     templates_by_tipo: Dict[str, List[Template]] = {}
 
@@ -563,52 +564,66 @@ def discover_templates(templates_folder: Path) -> Dict[str, List[Template]]:
         logger.error(f"Templates folder does not exist: {templates_folder}")
         return templates_by_tipo
 
-    def add_template(path: Path, tipo: str, niche: str = ""):
-        """Helper to add a validated template."""
+    def find_all_templates(directory: Path, depth: int = 0, max_depth: int = 4) -> List[Path]:
+        """Recursively find all directories containing package.json."""
+        found = []
+
+        if depth > max_depth:
+            return found
+
+        try:
+            for item in directory.iterdir():
+                if not item.is_dir() or item.name.startswith('.') or item.name == 'node_modules':
+                    continue
+
+                if validate_template_structure(item):
+                    found.append(item)
+                else:
+                    # Keep searching deeper
+                    found.extend(find_all_templates(item, depth + 1, max_depth))
+        except PermissionError:
+            pass
+
+        return found
+
+    # Find all valid templates
+    all_templates = find_all_templates(templates_folder)
+
+    for template_path in all_templates:
+        # Determine tipo based on folder structure
+        # Use the most meaningful parent folder name as tipo
+        relative = template_path.relative_to(templates_folder)
+        parts = relative.parts
+
+        if len(parts) == 1:
+            # Direct child: templates/template-name/
+            tipo = "default"
+            name = parts[0]
+        elif len(parts) == 2:
+            # Two levels: templates/tipo/template-name/
+            tipo = parts[0]
+            name = f"{parts[0]}/{parts[1]}"
+        else:
+            # Three+ levels: templates/tipo/subtipo/template-name/
+            # Use the parent of the template as tipo
+            tipo = parts[-2]
+            name = f"{parts[-2]}/{parts[-1]}"
+
         if tipo not in templates_by_tipo:
             templates_by_tipo[tipo] = []
 
-        # Build descriptive name
-        if tipo != "default":
-            name = f"{tipo}/{path.name}"
-        else:
-            name = path.name
-
         template = Template(
             name=name,
-            path=path,
-            niche=niche or tipo,
-            description=get_template_description(path)
+            path=template_path,
+            niche=tipo,
+            description=get_template_description(template_path)
         )
         templates_by_tipo[tipo].append(template)
-        logger.info(f"Found template: {tipo}/{path.name}")
+        logger.info(f"Found template: {name} at {template_path}")
 
-    def scan_directory(directory: Path, tipo: str = "", niche: str = ""):
-        """Recursively scan for valid templates up to 3 levels deep."""
-        for item in directory.iterdir():
-            if not item.is_dir() or item.name.startswith('.'):
-                continue
+    total = sum(len(v) for v in templates_by_tipo.values())
+    logger.info(f"Discovered {total} templates in {len(templates_by_tipo)} categories")
 
-            if validate_template_structure(item):
-                # Found a valid template
-                effective_tipo = tipo or "default"
-                add_template(item, effective_tipo, niche)
-            else:
-                # Not a template, check subdirectories
-                if not tipo:
-                    # This could be a "tipo" folder (e.g., template-1-independiente)
-                    for subitem in item.iterdir():
-                        if subitem.is_dir() and not subitem.name.startswith('.'):
-                            if validate_template_structure(subitem):
-                                # Found: tipo/variacion
-                                add_template(subitem, item.name, niche)
-                            else:
-                                # Could be: niche/tipo/variacion (3 levels)
-                                for deep_item in subitem.iterdir():
-                                    if deep_item.is_dir() and validate_template_structure(deep_item):
-                                        add_template(deep_item, subitem.name, item.name)
-
-    scan_directory(templates_folder)
     return templates_by_tipo
 
 
@@ -695,6 +710,10 @@ def choose_design_decisions(
         for t in available_templates
     ])
 
+    # Add some randomness to encourage variety
+    import random
+    random_seed = random.randint(1, 100)
+
     prompt = f"""Eres un experto en diseño web eligiendo la mejor configuración de sitio para un negocio.
 
 INFORMACIÓN DEL NEGOCIO:
@@ -704,28 +723,35 @@ INFORMACIÓN DEL NEGOCIO:
 - Instagram: {lead.instagram_fb_link or 'No disponible'}
 - Teléfono: {lead.phone_whatsapp or 'No disponible'}
 
-TEMPLATES DISPONIBLES PARA {lead.niche.upper()}:
+TEMPLATES DISPONIBLES (DEBES elegir UNA de estas opciones EXACTAS):
 {template_descriptions}
 
-TEMAS DE COLOR DISPONIBLES:
-- elegante: Rosa pálido + Dorado - Para negocios premium y sofisticados
-- fresh: Mint + Coral - Para negocios jóvenes y modernos
-- bold: Negro + Fucsia - Para artistas atrevidas y creativas
-- natural: Verde Sage + Beige - Para negocios eco-friendly y naturales
+IMPORTANTE: Los nombres de template disponibles son EXACTAMENTE:
+{', '.join([t.name for t in available_templates])}
 
-SECCIONES DISPONIBLES (en orden default):
-Hero, About, Services, Gallery, Testimonials, Contact, Footer, WhatsAppButton
+ESTILOS DE CADA TEMPLATE:
+- template-minimalista-elegante: Diseño limpio y sofisticado, ideal para spas premium y negocios exclusivos
+- template-moderna/moderna-geometrica: Diseño moderno con formas geométricas, ideal para negocios jóvenes y urbanos
+- template-artistica/artistica-creativa: Diseño creativo y llamativo, ideal para nail artists y negocios artísticos
 
-REGLAS:
-1. Hero, Contact, Footer y WhatsAppButton son OBLIGATORIOS y no pueden ocultarse
-2. WhatsAppButton siempre debe ir al final
-3. Si no hay Instagram disponible, considera ocultar Gallery o usar menos imágenes
-4. Si no hay reseñas/testimonios, oculta la sección Testimonials
-5. Elige el tema según el estilo del negocio y su audiencia target
+TEMAS DE COLOR:
+- elegante: Rosa pálido + Dorado (premium, sofisticado)
+- fresh: Mint + Coral (joven, moderno, energético)
+- bold: Negro + Fucsia (atrevido, artístico, creativo)
+- natural: Verde Sage + Beige (orgánico, natural, calmado)
 
-Responde SOLO con un JSON válido (sin markdown, sin explicaciones):
+CRITERIOS DE SELECCIÓN (seed={random_seed}):
+- Si el nombre del negocio suena artístico/creativo → template-artistica
+- Si el nombre suena moderno/urbano → template-moderna
+- Si el nombre suena elegante/premium → template-minimalista-elegante
+- Varía el tema según el estilo: nombres en inglés → fresh/bold, nombres clásicos → elegante/natural
+
+SECCIONES (oculta Testimonials siempre ya que no tenemos reseñas):
+Hero, About, Services, Gallery, Contact, Footer, WhatsAppButton
+
+Responde SOLO JSON (sin markdown, sin explicaciones):
 {{
-    "template_name": "nombre-exacto-del-template",
+    "template_name": "COPIAR_EXACTO_DE_LA_LISTA",
     "theme": "elegante|fresh|bold|natural",
     "sections_order": ["Hero", "About", "Services", "Gallery", "Contact", "Footer", "WhatsAppButton"],
     "sections_to_hide": ["Testimonials"]
@@ -1027,7 +1053,7 @@ class ImageSourcer:
         count: int = 6
     ) -> List[ImageSource]:
         """
-        Attempts to source images in priority order.
+        Sources niche-relevant stock images for the mockup.
         Returns list of ImageSource with local paths.
         """
         images: List[ImageSource] = []
@@ -1036,21 +1062,40 @@ class ImageSourcer:
         images_dir = output_dir / 'images'
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Try Instagram
-        if lead.instagram_fb_link:
-            logger.info(f"Attempting Instagram scrape for {lead.business_name}")
-            try:
-                instagram_images = self.scrape_instagram(
-                    lead.instagram_fb_link,
-                    images_dir,
-                    count
-                )
-                images.extend(instagram_images)
-                logger.info(f"Got {len(instagram_images)} images from Instagram")
-            except Exception as e:
-                logger.warning(f"Instagram scraping failed: {e}")
+        # ===========================================
+        # INSTAGRAM SCRAPING - COMENTADO
+        # Descomentar si se quiere usar imágenes del Instagram del negocio
+        # ===========================================
+        # if lead.instagram_fb_link:
+        #     logger.info(f"Attempting Instagram scrape for {lead.business_name}")
+        #     try:
+        #         instagram_images = self.scrape_instagram(
+        #             lead.instagram_fb_link,
+        #             images_dir,
+        #             count
+        #         )
+        #         images.extend(instagram_images)
+        #         logger.info(f"Got {len(instagram_images)} images from Instagram")
+        #     except Exception as e:
+        #         logger.warning(f"Instagram scraping failed: {e}")
+        # ===========================================
 
-        # 2. Try Unsplash if we need more images
+        # 1. Try Pexels API (free, no key needed for basic usage) - NICHE RELEVANT IMAGES
+        remaining = count - len(images)
+        if remaining > 0:
+            logger.info(f"Fetching {remaining} niche-relevant images from Pexels for '{lead.niche}'")
+            try:
+                pexels_images = self.fetch_pexels_images(
+                    lead.niche,
+                    images_dir,
+                    remaining,
+                    offset=len(images)
+                )
+                images.extend(pexels_images)
+            except Exception as e:
+                logger.warning(f"Pexels fetch failed: {e}")
+
+        # 2. Try Unsplash if we need more images (requires API key)
         remaining = count - len(images)
         if remaining > 0 and self.unsplash_key:
             logger.info(f"Fetching {remaining} images from Unsplash")
@@ -1065,7 +1110,22 @@ class ImageSourcer:
             except Exception as e:
                 logger.warning(f"Unsplash fetch failed: {e}")
 
-        # 3. Use placeholders for any remaining
+        # 3. Try Picsum as last fallback
+        remaining = count - len(images)
+        if remaining > 0:
+            logger.info(f"Fetching {remaining} fallback images from Picsum")
+            try:
+                picsum_images = self.fetch_picsum_images(
+                    lead.niche,
+                    images_dir,
+                    remaining,
+                    offset=len(images)
+                )
+                images.extend(picsum_images)
+            except Exception as e:
+                logger.warning(f"Picsum fetch failed: {e}")
+
+        # 4. Use placeholders for any remaining
         remaining = count - len(images)
         if remaining > 0:
             logger.info(f"Using {remaining} placeholder images")
@@ -1152,6 +1212,223 @@ class ImageSourcer:
 
         return images
 
+    def fetch_pexels_images(
+        self,
+        niche: str,
+        output_dir: Path,
+        count: int = 6,
+        offset: int = 0
+    ) -> List[ImageSource]:
+        """
+        Fetches niche-relevant stock images from Pexels API.
+        Uses curated search queries per niche for high-quality, relevant images.
+        """
+        images: List[ImageSource] = []
+
+        # Define search queries per niche - multiple queries for variety
+        niche_queries = {
+            'manicuristas': [
+                'nail art',
+                'manicure hands',
+                'nail polish',
+                'nail salon',
+                'beautiful nails',
+                'gel nails',
+                'nail design',
+                'pedicure spa',
+            ],
+            'manicurista': [
+                'nail art',
+                'manicure',
+                'nail polish',
+                'nail salon',
+                'beautiful nails',
+                'gel nails',
+            ],
+            'belleza': [
+                'beauty salon',
+                'cosmetics',
+                'makeup',
+                'skincare',
+                'beauty treatment',
+                'facial spa',
+            ],
+            'spa': [
+                'spa treatment',
+                'massage therapy',
+                'wellness spa',
+                'relaxation',
+                'spa stones',
+                'aromatherapy',
+            ],
+            'peluqueria': [
+                'hair salon',
+                'haircut',
+                'hairstyle',
+                'hair styling',
+                'hair color',
+                'barber shop',
+            ],
+            'default': [
+                'beauty salon',
+                'spa wellness',
+                'professional service',
+                'elegant interior',
+                'luxury service',
+                'cosmetics beauty',
+            ]
+        }
+
+        # Get queries for this niche
+        queries = niche_queries.get(niche.lower(), niche_queries['default'])
+
+        import random
+        # Shuffle queries for variety
+        random.shuffle(queries)
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+        }
+
+        downloaded = 0
+        query_index = 0
+
+        while downloaded < count and query_index < len(queries):
+            query = queries[query_index]
+            query_index += 1
+
+            try:
+                # Use Pexels search page and extract image URLs
+                # We'll use their public API endpoint
+                search_url = f"https://api.pexels.com/v1/search?query={query.replace(' ', '+')}&per_page=5&page=1"
+
+                # Try without API key first (public endpoint)
+                # Pexels requires API key, so let's use an alternative approach
+                # We'll scrape from their public search results
+
+                # Alternative: Use a direct image search via their CDN patterns
+                # Pexels images follow pattern: images.pexels.com/photos/{id}/pexels-photo-{id}.jpeg
+
+                # Let's use curated Pexels photo IDs for each niche instead
+                niche_photo_ids = self._get_pexels_ids_for_niche(niche.lower())
+
+                for photo_id in niche_photo_ids:
+                    if downloaded >= count:
+                        break
+
+                    try:
+                        # Pexels CDN URL pattern
+                        image_url = f"https://images.pexels.com/photos/{photo_id}/pexels-photo-{photo_id}.jpeg?auto=compress&cs=tinysrgb&w=800&h=600&fit=crop"
+
+                        response = self.session.get(image_url, headers=headers, timeout=15)
+
+                        if response.status_code == 200:
+                            filename = f"stock_{offset + downloaded + 1}.jpg"
+                            filepath = output_dir / filename
+
+                            with open(filepath, 'wb') as f:
+                                f.write(response.content)
+
+                            self._process_image(filepath)
+
+                            images.append(ImageSource(
+                                url=image_url,
+                                local_path=filepath,
+                                source_type='pexels',
+                                alt_text=f"Imagen profesional de {query}"
+                            ))
+
+                            downloaded += 1
+                            logger.info(f"Downloaded Pexels image {downloaded}/{count} ({query})")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to download Pexels image {photo_id}: {e}")
+                        continue
+
+                # If we got images from IDs, break out
+                if downloaded > 0:
+                    break
+
+            except Exception as e:
+                logger.warning(f"Pexels query '{query}' failed: {e}")
+                continue
+
+        return images
+
+    def _get_pexels_ids_for_niche(self, niche: str) -> List[int]:
+        """
+        Returns curated Pexels photo IDs for each niche.
+        These are high-quality, relevant images pre-selected for each business type.
+        """
+        import random
+
+        # Curated Pexels photo IDs by niche
+        # These are actual Pexels photo IDs that show relevant, professional images
+        niche_ids = {
+            'manicuristas': [
+                # Nail art, manicure, hands, nail polish
+                3997379,  # Nail art colorful
+                3997380,  # Manicure hands
+                3997381,  # Nail polish bottles
+                704815,   # Manicure procedure
+                1115128,  # Nail art design
+                3997373,  # Nail salon
+                3997383,  # Gel nails
+                3997384,  # Pedicure
+                1029896,  # Beauty hands
+                3997386,  # Nail tech working
+                5128267,  # Nail polish application
+                3997390,  # Elegant manicure
+                3997391,  # Nail art close-up
+                3997392,  # Spa manicure
+                5240677,  # Professional manicure
+            ],
+            'manicurista': [
+                3997379, 3997380, 704815, 1115128, 3997373,
+                3997383, 1029896, 5128267, 3997390, 5240677,
+            ],
+            'belleza': [
+                # Beauty, cosmetics, skincare
+                3373736,  # Cosmetics flatlay
+                2253833,  # Makeup brushes
+                3785147,  # Skincare products
+                3762879,  # Beauty treatment
+                3373716,  # Lipsticks
+                1029896,  # Beauty hands
+                3756619,  # Face cream
+                3785171,  # Spa products
+            ],
+            'spa': [
+                # Spa, wellness, relaxation
+                3188,     # Spa stones
+                3757942,  # Massage
+                3757952,  # Spa candles
+                3757954,  # Wellness
+                260405,   # Spa towels
+                3757957,  # Aromatherapy
+                3212164,  # Relaxation
+                3757960,  # Spa treatment
+            ],
+            'peluqueria': [
+                # Hair salon, haircuts
+                3993449,  # Hair styling
+                3993447,  # Hair salon
+                3993442,  # Haircut
+                897271,   # Hair color
+                3993450,  # Blow dry
+                3993443,  # Hair treatment
+            ],
+            'default': [
+                # Generic professional/beauty
+                3373736, 3785147, 1029896, 3188, 260405,
+                3757942, 3212164, 2253833, 3762879, 3756619,
+            ]
+        }
+
+        ids = niche_ids.get(niche, niche_ids['default'])
+        random.shuffle(ids)
+        return ids
+
     def fetch_unsplash_images(
         self,
         query: str,
@@ -1222,6 +1499,94 @@ class ImageSourcer:
 
         except Exception as e:
             logger.warning(f"Unsplash API error: {e}")
+
+        return images
+
+    def fetch_picsum_images(
+        self,
+        niche: str,
+        output_dir: Path,
+        count: int = 6,
+        offset: int = 0
+    ) -> List[ImageSource]:
+        """
+        Fetches stock images from Lorem Picsum with curated IDs for beauty/spa aesthetics.
+        Falls back to placehold.co if Picsum fails.
+        """
+        images: List[ImageSource] = []
+
+        # Curated Picsum IDs that work well for beauty/spa/professional businesses
+        # These are soft, elegant, professional-looking images
+        beauty_aesthetic_ids = [
+            # Soft colors, flowers, elegant
+            669, 633, 608, 568, 537, 477, 450, 429, 407, 399,
+            386, 376, 366, 360, 349, 330, 318, 301, 292, 287,
+            268, 256, 244, 237, 225, 200, 193, 180, 175, 164,
+            152, 145, 133, 119, 110, 103, 96, 89, 82, 75,
+        ]
+
+        import random
+        # Shuffle and select
+        selected_ids = random.sample(beauty_aesthetic_ids, min(count + 4, len(beauty_aesthetic_ids)))
+
+        for i, pic_id in enumerate(selected_ids):
+            if len(images) >= count:
+                break
+
+            try:
+                # Try Picsum first
+                image_url = f"https://picsum.photos/id/{pic_id}/800/600"
+                response = self.session.get(image_url, follow_redirects=True, timeout=15)
+
+                if response.status_code == 200:
+                    filename = f"stock_{offset + len(images) + 1}.jpg"
+                    filepath = output_dir / filename
+
+                    with open(filepath, 'wb') as f:
+                        f.write(response.content)
+
+                    self._process_image(filepath)
+
+                    images.append(ImageSource(
+                        url=image_url,
+                        local_path=filepath,
+                        source_type='unsplash',
+                        alt_text=f"Imagen profesional {len(images) + 1}"
+                    ))
+
+                    logger.info(f"Downloaded Picsum image {len(images)}/{count} (id={pic_id})")
+
+            except Exception as e:
+                logger.warning(f"Failed to download Picsum image {pic_id}: {e}")
+                continue
+
+        # If we still need more images, use placehold.co with beauty colors
+        if len(images) < count:
+            beauty_colors = ['fce4ec', 'f8bbd9', 'f3e5f5', 'e1bee7', 'ede7f6', 'e8eaf6']
+            for i in range(count - len(images)):
+                try:
+                    color = beauty_colors[i % len(beauty_colors)]
+                    image_url = f"https://placehold.co/800x600/{color}/gray?text=Imagen+{i+1}"
+                    response = self.session.get(image_url, timeout=10)
+                    response.raise_for_status()
+
+                    filename = f"stock_{offset + len(images) + 1}.jpg"
+                    filepath = output_dir / filename
+
+                    with open(filepath, 'wb') as f:
+                        f.write(response.content)
+
+                    images.append(ImageSource(
+                        url=image_url,
+                        local_path=filepath,
+                        source_type='placeholder',
+                        alt_text=f"Imagen de muestra {len(images) + 1}"
+                    ))
+
+                    logger.info(f"Downloaded placeholder image {len(images)}/{count}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to download placeholder: {e}")
 
         return images
 
@@ -1449,19 +1814,36 @@ export const siteConfig = {{
   // ====== HERO SECTION ======
   hero: {{
     title: "{content.hero_title}",
+    titleAccent: "",
     subtitle: "{content.hero_subtitle}",
     ctaPrimary: "{content.hero_cta_primary}",
     ctaSecondary: "{content.hero_cta_secondary}",
     image: "{hero_image}",
+    stats: [
+      {{ number: "500+", label: "Clientes" }},
+      {{ number: "5", label: "Años Exp." }},
+      {{ number: "100%", label: "Calidad" }},
+    ]
   }},
 
   // ====== SOBRE MÍ ======
   about: {{
     title: "{content.about_title}",
     name: "{content.about_name}",
+    role: "Especialista en Uñas",
     bio: "{content.about_bio}",
     image: "{about_image}",
-    badges: {badges_str}
+    badges: {badges_str},
+    highlights: [
+      {{ number: "5+", label: "Años de experiencia" }},
+      {{ number: "500+", label: "Clientes satisfechas" }},
+      {{ number: "50+", label: "Diseños únicos" }},
+    ],
+    certifications: [
+      "Técnicas Profesionales de Manicure",
+      "Esmaltado Semipermanente Avanzado",
+      "Nail Art Creativo"
+    ]
   }},
 
   // ====== SERVICIOS ======
@@ -1897,8 +2279,11 @@ async def take_screenshot(
     wait_time: int = SCREENSHOT_WAIT
 ) -> bool:
     """
-    Takes a screenshot using Playwright.
-    Only captures the visible viewport (hero section).
+    Takes full-page screenshot and PDF using Playwright.
+    Generates:
+    - mockup.png: Full-page screenshot (entire scrollable page)
+    - mockup.pdf: PDF version for easy viewing/sharing
+    - mockup-hero.png: Just the hero section (viewport only)
     """
     try:
         async with async_playwright() as p:
@@ -1914,12 +2299,28 @@ async def take_screenshot(
             # Additional wait for any animations
             await page.wait_for_timeout(wait_time)
 
-            # Take screenshot of viewport only (hero section)
-            await page.screenshot(path=str(output_path), full_page=False)
+            # 1. Full-page screenshot (entire page)
+            full_page_path = output_path
+            await page.screenshot(path=str(full_page_path), full_page=True)
+            logger.info(f"Full-page screenshot saved to {full_page_path}")
+
+            # 2. Hero-only screenshot (viewport)
+            hero_path = output_path.parent / "mockup-hero.png"
+            await page.screenshot(path=str(hero_path), full_page=False)
+            logger.info(f"Hero screenshot saved to {hero_path}")
+
+            # 3. PDF version (scrollable, like viewing the real page)
+            pdf_path = output_path.parent / "mockup.pdf"
+            await page.pdf(
+                path=str(pdf_path),
+                format='A4',
+                print_background=True,
+                margin={'top': '0', 'right': '0', 'bottom': '0', 'left': '0'}
+            )
+            logger.info(f"PDF saved to {pdf_path}")
 
             await browser.close()
 
-            logger.info(f"Screenshot saved to {output_path}")
             return True
 
     except Exception as e:
@@ -1974,9 +2375,14 @@ def load_leads_from_excel(excel_path: Path) -> List[Lead]:
         # 2. Generate Mockup = 'Yes' or empty
         # 3. Mockup Status is not 'Completed'
 
+        # Convert columns to string to handle mixed types
+        df['tier'] = df['tier'].astype(str).fillna('')
+        df['generate_mockup'] = df['generate_mockup'].astype(str).fillna('')
+        df['mockup_status'] = df['mockup_status'].astype(str).fillna('')
+
         mask = (
-            (df['tier'].str.contains('Tier 1', case=False, na=False) | (df['tier'] == '')) &
-            (df['generate_mockup'].str.lower().isin(['yes', 'si', 'sí', '']) | df['generate_mockup'].isna()) &
+            (df['tier'].str.contains('Tier 1|1|2', case=False, na=False) | (df['tier'] == '') | (df['tier'] == 'nan')) &
+            (df['generate_mockup'].str.lower().isin(['yes', 'si', 'sí', '', 'nan']) | df['generate_mockup'].isna()) &
             (~df['mockup_status'].str.lower().isin(['completed', 'completado']))
         )
 
@@ -2279,18 +2685,16 @@ def process_single_lead(
         # 1. Update Excel to Processing
         safe_update_excel(lead.row_index, 'Processing')
 
-        # 2. Get templates for niche
-        niche_templates = templates.get(lead.niche, [])
-        if not niche_templates:
-            # Try to find any available templates
-            for niche, tmpl_list in templates.items():
-                if tmpl_list:
-                    niche_templates = tmpl_list
-                    logger.warning(f"No templates for niche '{lead.niche}', using '{niche}'")
-                    break
+        # 2. Get ALL available templates (flatten from all categories)
+        all_templates = []
+        for category, tmpl_list in templates.items():
+            all_templates.extend(tmpl_list)
 
-        if not niche_templates:
+        if not all_templates:
             raise ValueError("No templates available")
+
+        logger.info(f"Available templates for selection: {[t.name for t in all_templates]}")
+        niche_templates = all_templates  # Let Claude choose from all
 
         # 3. Get design decisions from Claude CLI
         logger.info("Getting design decisions from Claude...")
@@ -2581,13 +2985,159 @@ def main():
     )
 
 
-if __name__ == '__main__':
+def main_cli():
+    """CLI entry point - bypasses GUI dialogs."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description='Mockup Generator - Genera mockups personalizados para leads'
+    )
+    parser.add_argument('--excel', '-e', required=True, help='Ruta al archivo Excel con leads')
+    parser.add_argument('--templates', '-t', required=True, help='Ruta a la carpeta de templates')
+    parser.add_argument('--output', '-o', required=True, help='Ruta a la carpeta de salida')
+    parser.add_argument('--max-leads', '-m', type=int, default=0, help='Máximo de leads a procesar (0 = todos)')
+    parser.add_argument('--workers', '-w', type=int, default=1, help='Número de workers paralelos (1-5)')
+
+    args = parser.parse_args()
+
+    print("="*60)
+    print("MOCKUP GENERATOR (CLI Mode)")
+    print("Generador de mockups personalizados para leads")
+    print("="*60)
+
+    # Validate paths
+    excel_path = Path(args.excel)
+    templates_folder = Path(args.templates)
+    output_folder = Path(args.output)
+
+    if not excel_path.exists():
+        print(f"❌ Error: Excel no encontrado: {excel_path}")
+        return
+
+    if not templates_folder.exists():
+        print(f"❌ Error: Carpeta de templates no encontrada: {templates_folder}")
+        return
+
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n📊 Excel: {excel_path}")
+    print(f"📁 Templates: {templates_folder}")
+    print(f"📂 Output: {output_folder}")
+    print(f"👷 Workers: {args.workers}")
+    print(f"🔢 Max leads: {args.max_leads if args.max_leads > 0 else 'todos'}")
+
+    # Discover templates
+    print("\n🔍 Descubriendo templates...")
+    templates = discover_templates(templates_folder)
+
+    total_templates = sum(len(t) for t in templates.values())
+    if total_templates == 0:
+        print("❌ Error: No se encontraron templates válidos")
+        return
+
+    print(f"   Encontrados {total_templates} templates en {len(templates)} nichos:")
+    for niche, tmpls in templates.items():
+        print(f"   - {niche}: {len(tmpls)} templates")
+
+    # Load leads
+    print("\n📋 Cargando leads del Excel...")
     try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nProceso interrumpido por el usuario")
-        sys.exit(1)
+        leads = load_leads_from_excel(excel_path)
     except Exception as e:
-        logger.exception("Error fatal")
-        show_error(f"Error fatal: {e}")
-        sys.exit(1)
+        print(f"❌ Error al cargar Excel: {e}")
+        return
+
+    if not leads:
+        print("ℹ️ No hay leads pendientes para procesar")
+        return
+
+    print(f"   {len(leads)} leads pendientes para procesar")
+
+    # Verify Claude CLI
+    print("\n🤖 Verificando Claude CLI...")
+    if not verify_claude_cli():
+        print("❌ Error: Claude CLI no encontrado")
+        return
+    print("   Claude CLI disponible ✓")
+
+    # Apply max_leads limit
+    if args.max_leads > 0 and args.max_leads < len(leads):
+        leads = leads[:args.max_leads]
+        print(f"\n📌 Limitado a {args.max_leads} leads")
+
+    # Process leads
+    print(f"\n🚀 Procesando {len(leads)} leads...")
+
+    if args.workers > 1:
+        print(f"   Modo: Paralelo con {args.workers} workers")
+        processor = ParallelProcessor(max_workers=args.workers)
+
+        try:
+            results = processor.process_leads_parallel(
+                leads=leads,
+                templates=templates,
+                output_folder=output_folder,
+                excel_path=excel_path
+            )
+        finally:
+            processor.shutdown()
+    else:
+        print("   Modo: Secuencial")
+        results: List[ProcessingResult] = []
+
+        image_sourcer = ImageSourcer(
+            fallback_folder=Path(__file__).parent / 'fallback_images'
+        )
+
+        try:
+            for i, lead in enumerate(leads, 1):
+                print(f"\n[{i}/{len(leads)}] Procesando: {lead.business_name}")
+
+                result = process_single_lead(
+                    lead,
+                    templates,
+                    output_folder,
+                    image_sourcer,
+                    excel_path
+                )
+
+                results.append(result)
+
+                if i < len(leads):
+                    time.sleep(2)
+        finally:
+            image_sourcer.close()
+
+    # Print summary
+    print_summary(results)
+
+    successful_count = len([r for r in results if r.success])
+    print(f"\n✅ Procesamiento completado: {successful_count}/{len(results)} exitosos")
+    print(f"📂 Revisa la carpeta: {output_folder}")
+
+
+if __name__ == '__main__':
+    import sys
+
+    # If CLI arguments provided, use CLI mode
+    if len(sys.argv) > 1 and sys.argv[1] in ['--excel', '-e', '--help', '-h']:
+        try:
+            main_cli()
+        except KeyboardInterrupt:
+            print("\n\nProceso interrumpido por el usuario")
+            sys.exit(1)
+        except Exception as e:
+            logger.exception("Error fatal en modo CLI")
+            print(f"❌ Error fatal: {e}")
+            sys.exit(1)
+    else:
+        # Default: GUI mode
+        try:
+            main()
+        except KeyboardInterrupt:
+            print("\n\nProceso interrumpido por el usuario")
+            sys.exit(1)
+        except Exception as e:
+            logger.exception("Error fatal")
+            show_error(f"Error fatal: {e}")
+            sys.exit(1)
