@@ -2,7 +2,7 @@
 # Install with: pip install -r requirements.txt
 
 # Core
-anthropic>=0.18.0          # Claude API client
+# Note: Uses Claude CLI (no API key needed, uses Max subscription)
 pandas>=2.0.0              # Excel/DataFrame operations
 openpyxl>=3.1.0            # Excel file read/write
 

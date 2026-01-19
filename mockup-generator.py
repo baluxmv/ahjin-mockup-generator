@@ -3,7 +3,8 @@
 Mockup Generator for Lead Outreach
 ===================================
 Generates personalized website mockups and outreach messages for leads without websites.
-Uses Astro templates, Claude API for content generation, and Playwright for screenshots.
+Uses Astro templates, Claude CLI for content generation, and Playwright for screenshots.
+Uses your Claude Max subscription (no API key needed).
 
 Usage:
     python mockup-generator.py
@@ -40,7 +41,6 @@ from threading import Lock, Semaphore
 from queue import Queue
 
 # Third-party imports
-import anthropic
 import pandas as pd
 import httpx
 import psutil
@@ -613,32 +613,81 @@ def discover_templates(templates_folder: Path) -> Dict[str, List[Template]]:
 
 
 # =============================================================================
-# SECTION 5: CLAUDE API INTEGRATION
+# SECTION 5: CLAUDE CLI INTEGRATION
 # =============================================================================
 
-def create_claude_client() -> anthropic.Anthropic:
+def verify_claude_cli() -> bool:
     """
-    Creates Anthropic client from environment variable.
-    Raises EnvironmentError if API key not set.
+    Verifies that Claude CLI is installed and accessible.
+    Returns True if available, False otherwise.
     """
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-
-    if not api_key:
-        raise EnvironmentError(
-            "ANTHROPIC_API_KEY not set. "
-            "Copy .env.example to .env and add your API key."
+    try:
+        result = subprocess.run(
+            ["claude", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10
         )
+        if result.returncode == 0:
+            logger.info(f"Claude CLI found: {result.stdout.strip()}")
+            return True
+        return False
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
 
-    return anthropic.Anthropic(api_key=api_key)
+
+def call_claude_cli(
+    prompt: str,
+    model: str = "sonnet",
+    max_retries: int = 3,
+    timeout: int = 120
+) -> str:
+    """
+    Calls Claude via CLI (uses Max subscription, no API key needed).
+
+    Args:
+        prompt: The prompt to send to Claude
+        model: Model to use (sonnet, opus, haiku)
+        max_retries: Number of retry attempts
+        timeout: Timeout in seconds
+
+    Returns:
+        Claude's response text
+
+    Raises:
+        RuntimeError: If all retries fail
+    """
+    for attempt in range(max_retries):
+        try:
+            result = subprocess.run(
+                ["claude", "--print", "--model", model],
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+
+            if result.returncode == 0:
+                return result.stdout.strip()
+            else:
+                logger.warning(f"Claude CLI returned error (attempt {attempt + 1}): {result.stderr}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Claude CLI timeout (attempt {attempt + 1})")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)
+
+    raise RuntimeError(f"Claude CLI failed after {max_retries} attempts")
 
 
 def choose_design_decisions(
-    client: anthropic.Anthropic,
     lead: Lead,
     available_templates: List[Template]
 ) -> DesignDecisions:
     """
-    Uses Claude to choose template, theme, and section configuration.
+    Uses Claude CLI to choose template, theme, and section configuration.
     """
     # Build template descriptions
     template_descriptions = "\n".join([
@@ -683,13 +732,7 @@ Responde SOLO con un JSON válido (sin markdown, sin explicaciones):
 }}"""
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        response_text = message.content[0].text.strip()
+        response_text = call_claude_cli(prompt, model="sonnet")
 
         # Clean potential markdown formatting
         if response_text.startswith('```'):
@@ -731,18 +774,17 @@ Responde SOLO con un JSON válido (sin markdown, sin explicaciones):
             sections_to_hide=['Testimonials']
         )
     except Exception as e:
-        logger.error(f"Claude API error: {e}")
+        logger.error(f"Claude CLI error: {e}")
         raise
 
 
 def generate_personalized_content(
-    client: anthropic.Anthropic,
     lead: Lead,
     design_decisions: DesignDecisions,
     instagram_context: Optional[str] = None
 ) -> GeneratedContent:
     """
-    Uses Claude to generate all personalized content for the site.
+    Uses Claude CLI to generate all personalized content for the site.
     """
     instagram_section = ""
     if instagram_context:
@@ -810,13 +852,7 @@ IMPORTANTE:
 Responde SOLO con el JSON, sin markdown ni explicaciones."""
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        response_text = message.content[0].text.strip()
+        response_text = call_claude_cli(prompt, model="sonnet")
 
         # Clean markdown
         if response_text.startswith('```'):
@@ -848,17 +884,16 @@ Responde SOLO con el JSON, sin markdown ni explicaciones."""
         logger.error(f"Failed to parse Claude content response: {e}")
         raise
     except Exception as e:
-        logger.error(f"Claude API error generating content: {e}")
+        logger.error(f"Claude CLI error generating content: {e}")
         raise
 
 
 def generate_outreach_messages(
-    client: anthropic.Anthropic,
     lead: Lead,
     mockup_filename: str
 ) -> Dict[str, str]:
     """
-    Generates WhatsApp and Email outreach messages.
+    Generates WhatsApp and Email outreach messages using Claude CLI.
     """
     prompt = f"""Genera mensajes de outreach para este lead potencial.
 
@@ -897,13 +932,7 @@ Asunto: [asunto aquí]
 [cuerpo del email aquí]"""
 
     try:
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        response_text = message.content[0].text.strip()
+        response_text = call_claude_cli(prompt, model="sonnet")
 
         # Parse response
         whatsapp_msg = ""
@@ -932,7 +961,7 @@ Asunto: [asunto aquí]
         }
 
     except Exception as e:
-        logger.error(f"Claude API error generating messages: {e}")
+        logger.error(f"Claude CLI error generating messages: {e}")
         # Return default messages
         return {
             'whatsapp': f"Hola! 👋 Vi {lead.business_name} y me encantó. Te preparé algo especial - un preview de cómo podría verse tu sitio web. ¿Te gustaría verlo?",
@@ -1492,6 +1521,148 @@ def write_site_config(proyecto_dir: Path, config_content: str):
     logger.info(f"Wrote site.config.ts to {config_path}")
 
 
+def parse_index_astro(content: str) -> Dict:
+    """
+    Parses ANY index.astro file and extracts its structure dynamically.
+
+    This function does NOT hardcode any specific components - it detects
+    whatever structure exists in the template.
+
+    Returns:
+        {
+            'imports': {'Layout': '../layouts/Layout.astro', 'Hero': '...', ...},
+            'wrapper_component': 'Layout',  # The component that wraps everything
+            'sections': ['Hero', 'About', ...],  # Reorderable sections in current order
+            'fixed_end_components': ['Footer', 'WhatsAppButton'],  # Components that stay at end
+            'all_components': ['Hero', 'About', ..., 'Footer', 'WhatsAppButton']  # All in order
+        }
+    """
+    result = {
+        'imports': {},
+        'wrapper_component': None,
+        'sections': [],
+        'fixed_end_components': [],
+        'all_components': []
+    }
+
+    # 1. Extract frontmatter (between ---)
+    frontmatter_match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
+    if not frontmatter_match:
+        logger.warning("Could not parse frontmatter from index.astro")
+        return result
+
+    frontmatter = frontmatter_match.group(1)
+
+    # 2. Parse ALL imports dynamically
+    import_pattern = r"import\s+(\w+)\s+from\s+['\"]([^'\"]+)['\"]"
+    for match in re.finditer(import_pattern, frontmatter):
+        component_name = match.group(1)
+        import_path = match.group(2)
+        result['imports'][component_name] = import_path
+
+    # 3. Detect wrapper component (the one that contains all others)
+    # Pattern: <ComponentName>...multiple <X />...</ComponentName>
+    wrapper_match = re.search(r'<(\w+)>\s*([\s\S]*?)\s*</\1>', content)
+    if wrapper_match:
+        result['wrapper_component'] = wrapper_match.group(1)
+        inner_content = wrapper_match.group(2)
+
+        # 4. Extract all self-closing components inside wrapper
+        component_pattern = r'<(\w+)\s*/>'
+        result['all_components'] = re.findall(component_pattern, inner_content)
+
+    # 5. Detect "fixed end" components (Footer, WhatsApp, etc.)
+    # Heuristic: components at the end with names containing these keywords
+    fixed_keywords = ['footer', 'whatsapp', 'cta', 'chat', 'widget', 'button']
+
+    fixed_end = []
+    for comp in reversed(result['all_components']):
+        comp_lower = comp.lower()
+        if any(kw in comp_lower for kw in fixed_keywords):
+            fixed_end.insert(0, comp)
+        else:
+            break  # Stop when we hit a content section
+
+    result['fixed_end_components'] = fixed_end
+
+    # 6. Reorderable sections = all except wrapper and fixed_end
+    result['sections'] = [
+        c for c in result['all_components']
+        if c not in fixed_end
+    ]
+
+    return result
+
+
+def rebuild_index_astro(
+    parsed: Dict,
+    new_order: List[str],
+    to_hide: List[str]
+) -> str:
+    """
+    Rebuilds index.astro with a new section order.
+
+    Args:
+        parsed: Result from parse_index_astro()
+        new_order: Desired order of sections (e.g., ['Services', 'Hero', 'Gallery'])
+        to_hide: Sections to exclude (e.g., ['Testimonials'])
+
+    Returns:
+        Complete new content for index.astro
+    """
+    # 1. Determine final sections
+    final_sections = []
+
+    # First: sections in new_order (in that order), excluding hidden
+    for section in new_order:
+        if section in parsed['sections'] and section not in to_hide:
+            final_sections.append(section)
+
+    # Second: existing sections not mentioned in new_order (maintain their relative order)
+    for section in parsed['sections']:
+        if section not in final_sections and section not in to_hide:
+            final_sections.append(section)
+
+    # 2. Build imports list (only include what we need)
+    imports = []
+
+    # Wrapper component first (e.g., Layout)
+    wrapper = parsed['wrapper_component']
+    if wrapper and wrapper in parsed['imports']:
+        imports.append(f"import {wrapper} from '{parsed['imports'][wrapper]}';")
+
+    # Section imports in order
+    for section in final_sections:
+        if section in parsed['imports']:
+            imports.append(f"import {section} from '{parsed['imports'][section]}';")
+
+    # Fixed end components (Footer, WhatsApp, etc.)
+    for fixed in parsed['fixed_end_components']:
+        if fixed not in to_hide and fixed in parsed['imports']:
+            imports.append(f"import {fixed} from '{parsed['imports'][fixed]}';")
+
+    # 3. Build component usage list
+    components = []
+    for section in final_sections:
+        components.append(f"  <{section} />")
+
+    for fixed in parsed['fixed_end_components']:
+        if fixed not in to_hide:
+            components.append(f"  <{fixed} />")
+
+    # 4. Construct final file
+    new_content = f"""---
+{chr(10).join(imports)}
+---
+
+<{wrapper}>
+{chr(10).join(components)}
+</{wrapper}>
+"""
+
+    return new_content
+
+
 def modify_index_astro(
     proyecto_dir: Path,
     sections_order: List[str],
@@ -1499,6 +1670,22 @@ def modify_index_astro(
 ):
     """
     Modifies index.astro to reorder sections and hide specified ones.
+
+    This function dynamically parses any index.astro structure - it does NOT
+    hardcode specific component names. It will work with any template variation.
+
+    Args:
+        proyecto_dir: Path to the copied Astro project
+        sections_order: Desired section order (e.g., ['Services', 'Hero', 'Gallery'])
+        sections_to_hide: Sections to remove (e.g., ['Testimonials'])
+
+    Example:
+        modify_index_astro(
+            proyecto_dir=Path('/output/negocio/proyecto'),
+            sections_order=['Gallery', 'Services', 'Hero', 'About'],
+            sections_to_hide=['Testimonials']
+        )
+        # Result: Gallery first, then Services, then Hero, etc. No Testimonials.
     """
     index_path = proyecto_dir / 'src' / 'pages' / 'index.astro'
 
@@ -1508,22 +1695,28 @@ def modify_index_astro(
 
     content = index_path.read_text(encoding='utf-8')
 
-    # Comment out imports for hidden sections
-    for section in sections_to_hide:
-        # Comment import line
-        pattern = rf"^(import {section} from.*$)"
-        content = re.sub(pattern, rf"// \1  // Hidden", content, flags=re.MULTILINE)
+    # 1. Parse the existing structure
+    parsed = parse_index_astro(content)
 
-        # Comment component usage
-        pattern = rf"(\s*)(<{section}\s*/?>)"
-        content = re.sub(pattern, rf"\1{{/* \2 */}}  {{/* Hidden */}}", content)
+    if not parsed['wrapper_component']:
+        logger.error("Could not detect wrapper component in index.astro")
+        return
 
-    # Note: Reordering sections would require more complex AST manipulation
-    # For now, we'll rely on the order being close enough to default
-    # Future improvement: parse and rewrite the component section
+    logger.info(f"Parsed index.astro: wrapper={parsed['wrapper_component']}, "
+                f"sections={parsed['sections']}, fixed={parsed['fixed_end_components']}")
 
-    index_path.write_text(content, encoding='utf-8')
-    logger.info(f"Modified index.astro: hidden sections = {sections_to_hide}")
+    # 2. Rebuild with new order
+    new_content = rebuild_index_astro(parsed, sections_order, sections_to_hide)
+
+    # 3. Write the modified file
+    index_path.write_text(new_content, encoding='utf-8')
+
+    # Calculate what actually changed for logging
+    final_sections = [s for s in sections_order if s in parsed['sections'] and s not in sections_to_hide]
+    remaining = [s for s in parsed['sections'] if s not in final_sections and s not in sections_to_hide]
+    final_sections.extend(remaining)
+
+    logger.info(f"Modified index.astro: new_order={final_sections}, hidden={sections_to_hide}")
 
 
 def copy_images_to_public(
@@ -1896,7 +2089,6 @@ class ParallelProcessor:
         leads: List[Lead],
         templates: Dict[str, List[Template]],
         output_folder: Path,
-        claude_client: anthropic.Anthropic,
         excel_path: Path
     ) -> List[ProcessingResult]:
         """
@@ -1913,7 +2105,6 @@ class ParallelProcessor:
                 lead,
                 templates,
                 output_folder,
-                claude_client,
                 excel_path
             )
             futures.append((future, lead))
@@ -1943,7 +2134,6 @@ class ParallelProcessor:
         lead: Lead,
         templates: Dict[str, List[Template]],
         output_folder: Path,
-        claude_client: anthropic.Anthropic,
         excel_path: Path
     ) -> ProcessingResult:
         """
@@ -1962,7 +2152,6 @@ class ParallelProcessor:
                     lead=lead,
                     templates=templates,
                     output_folder=output_folder,
-                    claude_client=claude_client,
                     image_sourcer=image_sourcer,
                     excel_path=excel_path,
                     port=port,
@@ -2057,7 +2246,6 @@ def process_single_lead(
     lead: Lead,
     templates: Dict[str, List[Template]],
     output_folder: Path,
-    claude_client: anthropic.Anthropic,
     image_sourcer: ImageSourcer,
     excel_path: Path,
     port: int = DEFAULT_PORT,
@@ -2104,10 +2292,9 @@ def process_single_lead(
         if not niche_templates:
             raise ValueError("No templates available")
 
-        # 3. Get design decisions from Claude
+        # 3. Get design decisions from Claude CLI
         logger.info("Getting design decisions from Claude...")
         design_decisions = choose_design_decisions(
-            claude_client,
             lead,
             niche_templates
         )
@@ -2119,10 +2306,9 @@ def process_single_lead(
         images = image_sourcer.source_images_for_lead(lead, output_dir)
         logger.info(f"Sourced {len(images)} images")
 
-        # 5. Generate content with Claude
+        # 5. Generate content with Claude CLI
         logger.info("Generating personalized content...")
         content = generate_personalized_content(
-            claude_client,
             lead,
             design_decisions
         )
@@ -2184,7 +2370,6 @@ def process_single_lead(
         # 16. Generate outreach messages
         logger.info("Generating outreach messages...")
         messages = generate_outreach_messages(
-            claude_client,
             lead,
             'mockup.png'
         )
@@ -2308,14 +2493,17 @@ def main():
 
     print(f"   {len(leads)} leads pendientes para procesar")
 
-    # 6. Initialize Claude client
-    print("\n6. Inicializando cliente Claude API...")
-    try:
-        claude_client = create_claude_client()
-        print("   Cliente inicializado correctamente")
-    except EnvironmentError as e:
-        show_error(str(e))
+    # 6. Verify Claude CLI
+    print("\n6. Verificando Claude CLI...")
+    if not verify_claude_cli():
+        show_error(
+            "Claude CLI no encontrado.\n\n"
+            "Asegúrate de tener Claude Code instalado:\n"
+            "https://claude.ai/claude-code\n\n"
+            "Y que el comando 'claude' esté disponible en tu terminal."
+        )
         return
+    print("   Claude CLI disponible ✓")
 
     # 7. Show configuration dialog
     print("\n7. Mostrando configuración...")
@@ -2347,7 +2535,6 @@ def main():
                 leads=leads,
                 templates=templates,
                 output_folder=output_folder,
-                claude_client=claude_client,
                 excel_path=excel_path
             )
         finally:
@@ -2370,7 +2557,6 @@ def main():
                     lead,
                     templates,
                     output_folder,
-                    claude_client,
                     image_sourcer,
                     excel_path
                 )
