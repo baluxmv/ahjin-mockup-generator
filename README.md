@@ -84,6 +84,8 @@ El Excel debe tener estas columnas:
 |---------|-------------|---------|
 | Business Name | Nombre del negocio | "María Bonita Spa" |
 | Niche | Nicho/categoría | "Manicuristas" |
+| Tier | 1 = sin website, 2 = con website | "1" |
+| Website URL | URL del sitio (vacío para Tier 1) | "" |
 | Comuna | Comuna (organiza output) | "Providencia" |
 | Phone/WhatsApp | Número de teléfono | "+56 9 1234 5678" |
 | Instagram/FB Link | Link a Instagram | "https://instagram.com/..." |
@@ -91,6 +93,17 @@ El Excel debe tener estas columnas:
 | Mockup Status | Se actualiza automáticamente | "Completed" |
 | Mockup Path | Ruta al mockup generado | "/output/Providencia/..." |
 | Mockup Date | Fecha de generación | "2026-01-19" |
+
+### Filtrado de Leads
+
+El script **solo procesa leads que cumplen TODAS estas condiciones**:
+
+1. **Tier = 1** (leads sin sitio web)
+2. **Website URL vacío** (verificación adicional)
+3. **Generate Mockup = "Sí"** (explícito, no vacío)
+4. **Mockup Status ≠ "Completed"** (no reprocesar completados)
+
+> **Nota**: Los leads Tier 2 (con website existente) son ignorados automáticamente.
 
 ## Estructura de Templates
 
@@ -172,10 +185,10 @@ Claude elige automáticamente entre 4 temas:
 
 | Tema | Colores | Ideal para |
 |------|---------|------------|
-| `elegante` | Rosa + Dorado | Spas premium, elegantes |
-| `fresh` | Mint + Coral | Negocios jóvenes, modernos |
-| `bold` | Negro + Fucsia | Artistas atrevidos |
-| `natural` | Verde Sage + Beige | Eco-friendly, orgánico |
+| `elegante` | Rosa suave + Oro rosado | Spas premium, elegantes |
+| `fresh` | Verde salvia + Terracota | Negocios frescos, naturales |
+| `bold` | Burgundy + Dorado (fondo negro) | Estilo sofisticado y atrevido |
+| `natural` | Verde oliva + Arena cálida | Eco-friendly, orgánico |
 
 ## Imágenes de Stock
 

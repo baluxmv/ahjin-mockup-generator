@@ -2370,21 +2370,35 @@ def load_leads_from_excel(excel_path: Path) -> List[Lead]:
             if col not in df.columns:
                 df[col] = ''
 
-        # Filter leads
-        # 1. Tier 1 (no website)
-        # 2. Generate Mockup = 'Yes' or empty
-        # 3. Mockup Status is not 'Completed'
+        # Filter leads - STRICT RULES:
+        # 1. Tier 1 only (leads sin website)
+        # 2. Website URL must be empty (double-check)
+        # 3. Generate Mockup = 'Yes' or 'Sí' (explicit, not empty)
+        # 4. Mockup Status is not 'Completed'
 
         # Convert columns to string to handle mixed types
-        df['tier'] = df['tier'].astype(str).fillna('')
-        df['generate_mockup'] = df['generate_mockup'].astype(str).fillna('')
-        df['mockup_status'] = df['mockup_status'].astype(str).fillna('')
+        df['tier'] = df['tier'].astype(str).str.strip()
+        df['website_url'] = df['website_url'].astype(str).str.strip()
+        df['generate_mockup'] = df['generate_mockup'].astype(str).str.strip()
+        df['mockup_status'] = df['mockup_status'].astype(str).str.strip()
 
-        mask = (
-            (df['tier'].str.contains('Tier 1|1|2', case=False, na=False) | (df['tier'] == '') | (df['tier'] == 'nan')) &
-            (df['generate_mockup'].str.lower().isin(['yes', 'si', 'sí', '', 'nan']) | df['generate_mockup'].isna()) &
-            (~df['mockup_status'].str.lower().isin(['completed', 'completado']))
+        # Tier 1 only (no Tier 2!)
+        is_tier_1 = df['tier'].str.lower().isin(['1', 'tier 1', 'tier1'])
+
+        # No website (verificación adicional)
+        has_no_website = (
+            (df['website_url'] == '') |
+            (df['website_url'].str.lower() == 'nan') |
+            (df['website_url'].str.lower() == 'none')
         )
+
+        # Generate Mockup must be explicitly Yes/Sí (not empty)
+        should_generate = df['generate_mockup'].str.lower().isin(['yes', 'si', 'sí'])
+
+        # Not already completed
+        not_completed = ~df['mockup_status'].str.lower().isin(['completed', 'completado'])
+
+        mask = is_tier_1 & has_no_website & should_generate & not_completed
 
         filtered_df = df[mask].copy()
 
